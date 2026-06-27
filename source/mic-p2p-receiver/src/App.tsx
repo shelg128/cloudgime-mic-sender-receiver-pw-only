@@ -133,10 +133,7 @@ export default function App() {
             setupPeerEvents(pc);
             pc.onicecandidate = (e) => {
               if (e.candidate && ws.readyState === WebSocket.OPEN) {
-                const c = e.candidate.candidate;
-                const isIPv6 = (c.match(/:/g) || []).length > 1;
-                if (!c.toLowerCase().includes('udp') || c.toLowerCase().includes('tcp') || isIPv6 || c.toLowerCase().includes('.local') || c.includes('169.254')) return;
-                ws.send(JSON.stringify({ WebRtc: { AddIceCandidate: { candidate: c, sdp_mid: e.candidate.sdpMid, sdp_mline_index: e.candidate.sdpMLineIndex, username_fragment: e.candidate.usernameFragment || null } } }));
+                ws.send(JSON.stringify({ WebRtc: { AddIceCandidate: { candidate: e.candidate.candidate, sdp_mid: e.candidate.sdpMid, sdp_mline_index: e.candidate.sdpMLineIndex, username_fragment: e.candidate.usernameFragment || null } } }));
               }
             };
           } else if (msg.WebRtc?.Description?.ty === 'offer') {
