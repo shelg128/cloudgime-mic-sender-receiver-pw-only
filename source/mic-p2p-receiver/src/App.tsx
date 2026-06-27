@@ -134,7 +134,8 @@ export default function App() {
             pc.onicecandidate = (e) => {
               if (e.candidate && ws.readyState === WebSocket.OPEN) {
                 const c = e.candidate.candidate;
-                if (!c.toLowerCase().includes('udp') || c.toLowerCase().includes('tcp') || c.includes(':') || c.toLowerCase().includes('.local') || c.includes('169.254')) return;
+                const isIPv6 = (c.match(/:/g) || []).length > 1;
+                if (!c.toLowerCase().includes('udp') || c.toLowerCase().includes('tcp') || isIPv6 || c.toLowerCase().includes('.local') || c.includes('169.254')) return;
                 ws.send(JSON.stringify({ WebRtc: { AddIceCandidate: { candidate: c, sdp_mid: e.candidate.sdpMid, sdp_mline_index: e.candidate.sdpMLineIndex, username_fragment: e.candidate.usernameFragment || null } } }));
               }
             };
@@ -144,6 +145,16 @@ export default function App() {
             await pc.setRemoteDescription(new RTCSessionDescription({ type: 'offer', sdp: msg.WebRtc.Description.sdp }));
             const answer = await pc.createAnswer();
             await pc.setLocalDescription(answer);
+            addLog(`Waiting for ICE gathering...`);
+            await new Promise<void>((resolve) => {
+              if (pc.iceGatheringState === 'complete') resolve();
+              else {
+                const check = () => { if (pc.iceGatheringState === 'complete') { pc.removeEventListener('icegatheringstatechange', check); resolve(); } };
+                pc.addEventListener('icegatheringstatechange', check);
+                setTimeout(() => { pc.removeEventListener('icegatheringstatechange', check); resolve(); }, 2000);
+              }
+            });
+            addLog(`ICE gathering done.`);
             ws.send(JSON.stringify({ WebRtc: { Description: { ty: pc.localDescription?.type, sdp: pc.localDescription?.sdp } } }));
           } else if (msg.WebRtc?.AddIceCandidate) {
             const pc = pcRef.current;

@@ -147,12 +147,23 @@ export default function App() {
             newPc.onicecandidate = (e) => {
               if (e.candidate && ws.readyState === WebSocket.OPEN) {
                 const c = e.candidate.candidate;
-                if (!c.toLowerCase().includes('udp') || c.toLowerCase().includes('tcp') || c.includes(':') || c.toLowerCase().includes('.local') || c.includes('169.254')) return;
+                const isIPv6 = (c.match(/:/g) || []).length > 1;
+                if (!c.toLowerCase().includes('udp') || c.toLowerCase().includes('tcp') || isIPv6 || c.toLowerCase().includes('.local') || c.includes('169.254')) return;
                 ws.send(JSON.stringify({ WebRtc: { AddIceCandidate: { candidate: c, sdp_mid: e.candidate.sdpMid, sdp_mline_index: e.candidate.sdpMLineIndex, username_fragment: e.candidate.usernameFragment || null } } }));
               }
             };
             const offer = await newPc.createOffer();
             await newPc.setLocalDescription(offer);
+            addLog(`Waiting for ICE gathering...`);
+            await new Promise<void>((resolve) => {
+              if (newPc.iceGatheringState === 'complete') resolve();
+              else {
+                const check = () => { if (newPc.iceGatheringState === 'complete') { newPc.removeEventListener('icegatheringstatechange', check); resolve(); } };
+                newPc.addEventListener('icegatheringstatechange', check);
+                setTimeout(() => { newPc.removeEventListener('icegatheringstatechange', check); resolve(); }, 2000);
+              }
+            });
+            addLog(`ICE gathering done.`);
             ws.send(JSON.stringify({ WebRtc: { Description: { ty: newPc.localDescription?.type, sdp: newPc.localDescription?.sdp } } }));
           } else if (msg.WebRtc?.Description?.ty === 'answer') {
             const activePc = pcRef.current;
