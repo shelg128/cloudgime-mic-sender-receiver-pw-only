@@ -151,7 +151,7 @@ export default function App() {
               else {
                 const check = () => { if (pc.iceGatheringState === 'complete') { pc.removeEventListener('icegatheringstatechange', check); resolve(); } };
                 pc.addEventListener('icegatheringstatechange', check);
-                setTimeout(() => { pc.removeEventListener('icegatheringstatechange', check); resolve(); }, 2000);
+                setTimeout(() => { pc.removeEventListener('icegatheringstatechange', check); resolve(); }, 5000);
               }
             });
             addLog(`ICE gathering done.`);

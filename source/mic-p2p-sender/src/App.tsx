@@ -160,7 +160,7 @@ export default function App() {
               else {
                 const check = () => { if (newPc.iceGatheringState === 'complete') { newPc.removeEventListener('icegatheringstatechange', check); resolve(); } };
                 newPc.addEventListener('icegatheringstatechange', check);
-                setTimeout(() => { newPc.removeEventListener('icegatheringstatechange', check); resolve(); }, 2000);
+                setTimeout(() => { newPc.removeEventListener('icegatheringstatechange', check); resolve(); }, 5000);
               }
             });
             addLog(`ICE gathering done.`);
@@ -170,6 +170,11 @@ export default function App() {
             if (!activePc) return;
             await activePc.setRemoteDescription(new RTCSessionDescription({ type: 'answer', sdp: msg.WebRtc.Description.sdp }));
             addLog('SDP Answer diterima.');
+          } else if (msg.WebRtc?.AddIceCandidate) {
+            const activePc = pcRef.current;
+            if (!activePc) return;
+            const a = msg.WebRtc.AddIceCandidate;
+            await activePc.addIceCandidate(new RTCIceCandidate({ candidate: a.candidate, sdpMid: a.sdp_mid, sdpMLineIndex: a.sdp_mline_index, usernameFragment: a.username_fragment })).catch(() => {});
           } else if (msg.Error) {
             addLog(`Error: ${typeof msg.Error === 'string' ? msg.Error : JSON.stringify(msg.Error)}`);
             setStatus('error');
