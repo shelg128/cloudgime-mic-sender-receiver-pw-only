@@ -44,8 +44,11 @@ function createWindow() {
   else win.loadFile(path.join(__dirname, '../dist/index.html'));
 
   win.webContents.on('did-finish-load', () => {
-    const url = process.argv.find(arg => arg.startsWith('sentinel-micp2p://'));
-    if (url) win.webContents.send('sentinel-micp2p-link', url);
+    const url = launchUrl || process.argv.find(arg => arg.startsWith('sentinel-micp2p://'));
+    if (url) {
+      win.webContents.send('sentinel-micp2p-link', url);
+      launchUrl = null;
+    }
   });
 }
 
