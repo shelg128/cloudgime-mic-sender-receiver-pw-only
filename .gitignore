@@ -1,0 +1,28 @@
+node_modules/
+dist/
+dist-desktop/
+*.tsbuildinfo
+.env
+.electron-builder.env
+npm-debug.log*
+*.log
+
+# Android build outputs
+android/app/build/
+android/.gradle/
+android/local.properties
+android/captures/
+*.apk
+*.aab
+
+# OS files
+.DS_Store
+Thumbs.db
+*.swp
+*.swo
+.idea/
+.vscode/
+
+# Original projects (keep only P2P)
+source/mic-receiver-windows/
+source/mic-sender-android-windows/
