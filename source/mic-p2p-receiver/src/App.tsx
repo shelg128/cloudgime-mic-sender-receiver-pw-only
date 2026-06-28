@@ -86,12 +86,8 @@ export default function App() {
     };
     pc.onconnectionstatechange = () => {
       addLog(`State: ${pc.connectionState}`);
-      if (pc.connectionState === 'connected') { setStatus('connected'); addLog('Koneksi WebRTC sukses!'); }
-      else if (pc.connectionState === 'disconnected' || pc.connectionState === 'failed') {
-        addLog('Koneksi terputus.');
-        disconnect('webrtc_failed');
-        setStatus('connecting');
-      }
+      if (pc.connectionState === 'connected') { setStatus('connected'); addLog('CONNECTED!'); }
+      else if (pc.connectionState === 'failed') { addLog('WebRTC FAILED'); setStatus('error'); setErrMessage('Koneksi WebRTC gagal.'); }
     };
     pc.ontrack = (event) => {
       addLog(`Track diterima: ${event.track.kind}`);
@@ -127,7 +123,7 @@ export default function App() {
           if (msg.Setup && Array.isArray(msg.Setup.ice_servers)) {
             if (pcRef.current) pcRef.current.close();
             const ice = msg.Setup.ice_servers.map((s: any) => ({ urls: s.urls, username: s.username || undefined, credential: s.credential || undefined }));
-            const pc = new RTCPeerConnection({ iceServers: ice, iceCandidatePoolSize: 2 });
+            const pc = new RTCPeerConnection({ iceServers: ice });
             pcRef.current = pc;
             pc.addTransceiver('audio', { direction: 'recvonly' });
             setupPeerEvents(pc);
@@ -136,28 +132,22 @@ export default function App() {
                 ws.send(JSON.stringify({ WebRtc: { AddIceCandidate: { candidate: e.candidate.candidate, sdp_mid: e.candidate.sdpMid, sdp_mline_index: e.candidate.sdpMLineIndex, username_fragment: e.candidate.usernameFragment || null } } }));
               }
             };
+            addLog('Receiver siap. Menunggu offer...');
           } else if (msg.WebRtc?.Description?.ty === 'offer') {
             const pc = pcRef.current;
             if (!pc) return;
+            addLog('Offer diterima, membuat answer...');
             await pc.setRemoteDescription(new RTCSessionDescription({ type: 'offer', sdp: msg.WebRtc.Description.sdp }));
             const answer = await pc.createAnswer();
             await pc.setLocalDescription(answer);
-            addLog(`Waiting for ICE gathering...`);
-            await new Promise<void>((resolve) => {
-              if (pc.iceGatheringState === 'complete') resolve();
-              else {
-                const check = () => { if (pc.iceGatheringState === 'complete') { pc.removeEventListener('icegatheringstatechange', check); resolve(); } };
-                pc.addEventListener('icegatheringstatechange', check);
-                setTimeout(() => { pc.removeEventListener('icegatheringstatechange', check); resolve(); }, 5000);
-              }
-            });
-            addLog(`ICE gathering done.`);
+            addLog('Answer dikirim.');
             ws.send(JSON.stringify({ WebRtc: { Description: { ty: pc.localDescription?.type, sdp: pc.localDescription?.sdp } } }));
           } else if (msg.WebRtc?.AddIceCandidate) {
             const pc = pcRef.current;
             if (!pc) return;
             const a = msg.WebRtc.AddIceCandidate;
             await pc.addIceCandidate(new RTCIceCandidate({ candidate: a.candidate, sdpMid: a.sdp_mid, sdpMLineIndex: a.sdp_mline_index, usernameFragment: a.username_fragment })).catch(() => {});
+            addLog('ICE candidate received');
           } else if (msg.Error) {
             addLog(`Error: ${typeof msg.Error === 'string' ? msg.Error : JSON.stringify(msg.Error)}`);
             setStatus('error');

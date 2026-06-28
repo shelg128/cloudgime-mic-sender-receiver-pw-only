@@ -84,104 +84,83 @@ export default function App() {
     addLog(`ID: ${activeId}`);
     addLog(`PW: ${activePw.replace(/./g, '*')}`);
 
+    let stream: MediaStream | null = null;
+
     try {
-      const stream = await navigator.mediaDevices.getUserMedia({ audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true } }).catch(err => { throw new Error(`Gagal akses mikrofon: ${err.message}`); });
+      stream = await navigator.mediaDevices.getUserMedia({ audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true } }).catch(err => { throw new Error(`Gagal akses mikrofon: ${err.message}`); });
       streamRef.current = stream;
       addLog(`Mikrofon aktif: ${stream.getTracks().map(t => t.label).join(', ')}`);
+    } catch (err: any) {
+      addLog(`Fatal: ${err.message}`);
+      setStatus('error');
+      setErrMessage(err.message);
+      return;
+    }
 
-      const pc = new RTCPeerConnection({ iceServers: [{ urls: 'stun:stun.l.google.com:19302' }], iceCandidatePoolSize: 2 });
-      pcRef.current = pc;
-      stream.getTracks().forEach(track => pc.addTrack(track, stream));
+    const createPeerAndOffer = (iceServers: RTCIceServer[], ws: WebSocket) => {
+      const newPc = new RTCPeerConnection({ iceServers });
+      pcRef.current = newPc;
+      stream!.getTracks().forEach(track => newPc.addTrack(track, stream!));
 
-      pc.onsignalingstatechange = () => addLog(`Signaling: ${pc.signalingState}`);
-      pc.oniceconnectionstatechange = () => addLog(`ICE: ${pc.iceConnectionState}`);
-      pc.onicegatheringstatechange = () => addLog(`Gathering: ${pc.iceGatheringState}`);
-      pc.onconnectionstatechange = () => {
-        addLog(`State: ${pc.connectionState}`);
-        if (pc.connectionState === 'connected') { setStatus('connected'); addLog('WebRTC koneksi berhasil!'); }
-        else if (pc.connectionState === 'disconnected' || pc.connectionState === 'failed') {
-          addLog('Koneksi terputus.');
-          disconnect('connection_failed');
+      newPc.oniceconnectionstatechange = () => addLog(`ICE: ${newPc.iceConnectionState}`);
+      newPc.onconnectionstatechange = () => {
+        addLog(`State: ${newPc.connectionState}`);
+        if (newPc.connectionState === 'connected') { setStatus('connected'); addLog('CONNECTED!'); }
+        else if (newPc.connectionState === 'failed') { addLog('WebRTC FAILED'); setStatus('error'); setErrMessage('Koneksi WebRTC gagal.'); }
+      };
+      newPc.onicecandidate = (e) => {
+        if (e.candidate && ws.readyState === WebSocket.OPEN) {
+          ws.send(JSON.stringify({ WebRtc: { AddIceCandidate: { candidate: e.candidate.candidate, sdp_mid: e.candidate.sdpMid, sdp_mline_index: e.candidate.sdpMLineIndex, username_fragment: e.candidate.usernameFragment || null } } }));
+        }
+      };
+
+      newPc.createOffer()
+        .then(offer => newPc.setLocalDescription(offer))
+        .then(() => {
+          addLog(`Sending offer...`);
+          ws.send(JSON.stringify({ WebRtc: { Description: { ty: newPc.localDescription?.type, sdp: newPc.localDescription?.sdp } } }));
+        })
+        .catch(err => addLog(`Offer error: ${err.message}`));
+    };
+
+    const ws = new WebSocket(wsUrl);
+    wsRef.current = ws;
+    let ping: any = null;
+
+    ws.onopen = () => {
+      addLog(`Signaling terhubung.`);
+      ws.send(JSON.stringify({ Init: { role: 'p2p_sender', p2p_id: activeId, p2p_password: activePw } }));
+      ping = setInterval(() => { if (ws.readyState === WebSocket.OPEN) ws.send(JSON.stringify({ Heartbeat: { ts_ms: Date.now() } })); }, 15000);
+    };
+
+    ws.onmessage = async (event) => {
+      try {
+        const msg = JSON.parse(event.data);
+        if (msg.Setup && Array.isArray(msg.Setup.ice_servers)) {
+          const ice = msg.Setup.ice_servers.map((s: any) => ({ urls: s.urls, username: s.username || undefined, credential: s.credential || undefined }));
+          if (pcRef.current) pcRef.current.close();
+          createPeerAndOffer(ice, ws);
+        } else if (msg.WebRtc?.Description?.ty === 'answer') {
+          const activePc = pcRef.current;
+          if (!activePc) return;
+          await activePc.setRemoteDescription(new RTCSessionDescription({ type: 'answer', sdp: msg.WebRtc.Description.sdp }));
+          addLog('SDP Answer diterima.');
+        } else if (msg.WebRtc?.AddIceCandidate) {
+          const activePc = pcRef.current;
+          if (!activePc) return;
+          const a = msg.WebRtc.AddIceCandidate;
+          await activePc.addIceCandidate(new RTCIceCandidate({ candidate: a.candidate, sdpMid: a.sdp_mid, sdpMLineIndex: a.sdp_mline_index, usernameFragment: a.username_fragment })).catch(() => {});
+          addLog('ICE candidate received');
+        } else if (msg.Error) {
+          addLog(`Error: ${typeof msg.Error === 'string' ? msg.Error : JSON.stringify(msg.Error)}`);
           setStatus('error');
-          setErrMessage('Koneksi WebRTC terputus.');
+          setErrMessage(typeof msg.Error === 'string' ? msg.Error : 'Gagal terhubung. Cek ID/Password.');
+          disconnect('server_error');
         }
-      };
-      pc.onicecandidate = (event) => {
-        if (event.candidate && wsRef.current && wsRef.current.readyState === WebSocket.OPEN) {
-          const c = event.candidate.candidate;
-          if (!c.toLowerCase().includes('udp') || c.toLowerCase().includes('tcp') || c.includes(':') || c.toLowerCase().includes('.local') || c.includes('169.254')) return;
-          wsRef.current.send(JSON.stringify({ WebRtc: { AddIceCandidate: { candidate: c, sdp_mid: event.candidate.sdpMid, sdp_mline_index: event.candidate.sdpMLineIndex, username_fragment: event.candidate.usernameFragment || null } } }));
-        }
-      };
+      } catch (err: any) { addLog(`onmessage error: ${err.message}`); }
+    };
 
-      const ws = new WebSocket(wsUrl);
-      wsRef.current = ws;
-      let ping: any = null;
-
-      ws.onopen = () => {
-        addLog(`Signaling terhubung.`);
-        ws.send(JSON.stringify({ Init: { role: 'p2p_sender', p2p_id: activeId, p2p_password: activePw } }));
-        ping = setInterval(() => { if (ws.readyState === WebSocket.OPEN) ws.send(JSON.stringify({ Heartbeat: { ts_ms: Date.now() } })); }, 15000);
-      };
-
-      ws.onmessage = async (event) => {
-        try {
-          const msg = JSON.parse(event.data);
-          if (msg.Setup && Array.isArray(msg.Setup.ice_servers)) {
-            const ice = msg.Setup.ice_servers.map((s: any) => ({ urls: s.urls, username: s.username || undefined, credential: s.credential || undefined }));
-            pc.close();
-            const newPc = new RTCPeerConnection({ iceServers: ice, iceCandidatePoolSize: 2 });
-            pcRef.current = newPc;
-            newPc.addTrack(stream.getAudioTracks()[0], stream);
-            newPc.onsignalingstatechange = () => addLog(`Signaling: ${newPc.signalingState}`);
-            newPc.oniceconnectionstatechange = () => addLog(`ICE: ${newPc.iceConnectionState}`);
-            newPc.onconnectionstatechange = () => {
-              addLog(`State: ${newPc.connectionState}`);
-              if (newPc.connectionState === 'connected') { setStatus('connected'); addLog('WebRTC koneksi berhasil!'); }
-              else if (newPc.connectionState === 'disconnected' || newPc.connectionState === 'failed') {
-                disconnect('connection_failed');
-                setStatus('error');
-                setErrMessage('Koneksi WebRTC terputus.');
-              }
-            };
-            newPc.onicecandidate = (e) => {
-              if (e.candidate && ws.readyState === WebSocket.OPEN) {
-                ws.send(JSON.stringify({ WebRtc: { AddIceCandidate: { candidate: e.candidate.candidate, sdp_mid: e.candidate.sdpMid, sdp_mline_index: e.candidate.sdpMLineIndex, username_fragment: e.candidate.usernameFragment || null } } }));
-              }
-            };
-            const offer = await newPc.createOffer();
-            await newPc.setLocalDescription(offer);
-            addLog(`Waiting for ICE gathering...`);
-            await new Promise<void>((resolve) => {
-              if (newPc.iceGatheringState === 'complete') resolve();
-              else {
-                const check = () => { if (newPc.iceGatheringState === 'complete') { newPc.removeEventListener('icegatheringstatechange', check); resolve(); } };
-                newPc.addEventListener('icegatheringstatechange', check);
-                setTimeout(() => { newPc.removeEventListener('icegatheringstatechange', check); resolve(); }, 5000);
-              }
-            });
-            addLog(`ICE gathering done.`);
-            ws.send(JSON.stringify({ WebRtc: { Description: { ty: newPc.localDescription?.type, sdp: newPc.localDescription?.sdp } } }));
-          } else if (msg.WebRtc?.Description?.ty === 'answer') {
-            const activePc = pcRef.current;
-            if (!activePc) return;
-            await activePc.setRemoteDescription(new RTCSessionDescription({ type: 'answer', sdp: msg.WebRtc.Description.sdp }));
-            addLog('SDP Answer diterima.');
-          } else if (msg.WebRtc?.AddIceCandidate) {
-            const activePc = pcRef.current;
-            if (!activePc) return;
-            const a = msg.WebRtc.AddIceCandidate;
-            await activePc.addIceCandidate(new RTCIceCandidate({ candidate: a.candidate, sdpMid: a.sdp_mid, sdpMLineIndex: a.sdp_mline_index, usernameFragment: a.username_fragment })).catch(() => {});
-          } else if (msg.Error) {
-            addLog(`Error: ${typeof msg.Error === 'string' ? msg.Error : JSON.stringify(msg.Error)}`);
-            setStatus('error');
-            setErrMessage(typeof msg.Error === 'string' ? msg.Error : 'Gagal terhubung. Cek ID/Password.');
-            disconnect('server_error');
-          }
-        } catch (err: any) { addLog(`Error: ${err.message}`); }
-      };
-
-      ws.onclose = () => {
+    ws.onclose = () => {
         if (ping) clearInterval(ping);
         if (status !== 'connected') {
           setStatus('disconnected');
@@ -194,12 +173,6 @@ export default function App() {
         setStatus('error');
         setErrMessage('Gagal koneksi signaling server.');
       };
-    } catch (err: any) {
-      addLog(`Fatal: ${err.message}`);
-      setStatus('error');
-      setErrMessage(err.message);
-      disconnect('fatal');
-    }
   };
 
   const disconnect = (reason?: string) => {
